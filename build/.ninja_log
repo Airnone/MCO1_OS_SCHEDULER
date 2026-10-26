@@ -1,0 +1,12 @@
+# ninja log v7
+46	5171	8147223009914544	CMakeFiles/csopesy.dir/src/config/Config.cpp.obj	461e671ee6b06bf6
+32	5318	8147223009771874	CMakeFiles/csopesy.dir/src/cli/CommandParser.cpp.obj	244236034776862f
+55	5715	8147223009994336	CMakeFiles/csopesy.dir/src/main.cpp.obj	c8e2915058689a84
+62	6066	8147223010014594	CMakeFiles/csopesy.dir/src/process/InstructionGenerator.cpp.obj	8f1920f04329f113
+39	6430	8147223009843868	CMakeFiles/csopesy.dir/src/cli/Console.cpp.obj	5f4a49ad1b1a6ea4
+70	6991	8147223010014594	CMakeFiles/csopesy.dir/src/process/Process.cpp.obj	946a1e711c2d12b8
+5318	9097	8147223062633512	CMakeFiles/csopesy.dir/src/scheduler/Core.cpp.obj	2190a5c801eb0011
+5176	9387	8147223061214785	CMakeFiles/csopesy.dir/src/report/ReportUtil.cpp.obj	249fe4fd9720b000
+6067	9903	8147223070015979	CMakeFiles/csopesy.dir/src/screen/ScreenManager.cpp.obj	d2f05047b3b9e644
+5716	11461	8147223066615547	CMakeFiles/csopesy.dir/src/scheduler/Scheduler.cpp.obj	f05b0df3c68cbed
+11461	12208	8147223124055527	csopesy.exe	76618968ee7b1c27

@@ -1,0 +1,15 @@
+cmake_minimum_required(VERSION 3.16)
+project(csopesy_emulator LANGUAGES CXX)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+file(GLOB_RECURSE SOURCES src/*.cpp)
+add_executable(csopesy ${SOURCES})
+target_include_directories(csopesy PRIVATE src)
+
+if(MSVC)
+    target_compile_options(csopesy PRIVATE /W3)
+else()
+    target_compile_options(csopesy PRIVATE -Wall -Wextra -pthread)
+    target_link_libraries(csopesy PRIVATE pthread)
+endif()
