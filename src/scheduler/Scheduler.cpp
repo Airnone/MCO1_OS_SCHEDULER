@@ -86,7 +86,7 @@ std::vector<std::shared_ptr<Process>> Scheduler::getRunningProcesses() const {
     std::lock_guard<std::mutex> lock(processListMutex_);
     for (const auto& p : allProcesses_) {
         ProcessState state = p->getState();
-        if (state != ProcessState::Finished) {
+        if (state == ProcessState::Running) {
             result.push_back(p);
         }
     }

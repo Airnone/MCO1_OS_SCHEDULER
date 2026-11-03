@@ -22,7 +22,7 @@ std::string ReportUtil::generateReport(const Scheduler* scheduler) {
     oss << "Cores available: " << coresAvailable << std::endl;
     oss << std::endl;
 
-    // Running processes
+    oss << "--------------------------------------" << std::endl;
     oss << "Running processes:" << std::endl;
     auto running = scheduler->getRunningProcesses();
     for (const auto& p : running) {
@@ -46,13 +46,15 @@ std::string ReportUtil::generateReport(const Scheduler* scheduler) {
             << std::endl;
     }
 
+    oss << "--------------------------------------" << std::endl;
+
     return oss.str();
 }
 
 void ReportUtil::writeToFile(const Scheduler* scheduler) {
     std::string report = generateReport(scheduler);
 
-    std::ofstream file("csopesy-log.txt", std::ios::trunc);
+    std::ofstream file("csopesy-log.txt", std::ios::app);
     if (file.is_open()) {
         file << report;
         file.close();
