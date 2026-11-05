@@ -4,7 +4,7 @@ A CLI-based process scheduler and multiplexer written in C++17, modeled on Linux
 
 ## Features
 
-- **Multi-core CPU simulation** — configurable 1–128 virtual cores, each running on its own thread
+- **Multi-core CPU simulation** — configurable 1–128 virtual cores, all stepped once per CPU tick by the scheduler thread
 - **FCFS & Round Robin scheduling** — switchable via `config.txt` without recompiling
 - **6-instruction process model** — PRINT, DECLARE, ADD, SUBTRACT, SLEEP, FOR (nestable up to 3 levels)
 - **Screen multiplexer** — create, reattach, and list process screens (`screen -s`, `screen -r`, `screen -ls`)
@@ -174,12 +174,12 @@ Timestamps use the format `MM/DD/YYYY hh:mm:ssAM/PM`.
 
 ## Architecture
 
-The system uses one OS thread per simulated CPU core, all pulling from a single mutex-protected ready queue. The scheduler runs its own tick loop on a dedicated thread, advancing a global atomic counter independent of wall-clock time.
+A single scheduler thread runs the tick loop. Each tick it wakes sleeping processes, spawns batch processes, assigns ready processes from the mutex-protected ready queue to free cores, executes one tick on every busy core, applies Round Robin preemption, and refills freed cores before advancing the global atomic tick counter (independent of wall-clock time). `screen -ls` and `report-util` read a snapshot taken between ticks, so their numbers are always consistent.
 
 ```
-Config ──→ Scheduler ──→ Core 0 (thread)
-               │     ──→ Core 1 (thread)
-               │     ──→ Core N (thread)
+Config ──→ Scheduler (tick thread) ──→ Core 0
+               │                  ──→ Core 1
+               │                  ──→ Core N
                │
 Console ──→ ScreenManager ──→ process-smi
        ──→ ReportUtil     ──→ csopesy-log.txt

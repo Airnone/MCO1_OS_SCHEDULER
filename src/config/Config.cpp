@@ -68,5 +68,9 @@ Config loadConfig(const std::string& filename) {
         }
     }
 
+    if (cfg.minIns > cfg.maxIns)
+        throw std::runtime_error("min-ins (" + std::to_string(cfg.minIns) +
+                                 ") must not exceed max-ins (" + std::to_string(cfg.maxIns) + ")");
+
     return cfg;
 }

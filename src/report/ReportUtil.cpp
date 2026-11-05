@@ -3,49 +3,47 @@
 #include <fstream>
 #include <iostream>
 #include <iomanip>
+#include <algorithm>
 
 std::string ReportUtil::generateReport(const Scheduler* scheduler) {
+    // One consistent snapshot, so "Cores used" always equals the number of
+    // running rows and every running row has a real core id.
+    ReportSnapshot snap = scheduler->snapshot();
     std::ostringstream oss;
 
-    int totalCores = scheduler->getTotalCores();
-    int coresUsed = scheduler->getCoresUsed();
-    int coresAvailable = totalCores - coresUsed;
+    int coresAvailable = snap.totalCores - snap.coresUsed;
+    int utilization = snap.totalCores > 0 ? (snap.coresUsed * 100) / snap.totalCores : 0;
 
-    // CPU utilization
-    double utilization = 0.0;
-    if (totalCores > 0) {
-        utilization = (static_cast<double>(coresUsed) / totalCores) * 100.0;
-    }
-
-    oss << "CPU utilization: " << static_cast<int>(utilization) << "%" << std::endl;
-    oss << "Cores used: " << coresUsed << std::endl;
+    oss << "CPU utilization: " << utilization << "%" << std::endl;
+    oss << "Cores used: " << snap.coresUsed << std::endl;
     oss << "Cores available: " << coresAvailable << std::endl;
     oss << std::endl;
 
+    // Column widths: names padded to the longest name, status column fixed
+    size_t nameWidth = 9;
+    for (const auto& r : snap.running) nameWidth = std::max(nameWidth, r.process->getName().size());
+    for (const auto& p : snap.finished) nameWidth = std::max(nameWidth, p->getName().size());
+    nameWidth += 3;
+    const int statusWidth = 13;
+
+    auto row = [&](const std::shared_ptr<Process>& p, const std::string& status, uint32_t done) {
+        oss << std::left << std::setw(static_cast<int>(nameWidth)) << p->getName()
+            << "(" << p->getCreationTimestamp() << ")    "
+            << std::setw(statusWidth) << status
+            << done << " / " << p->getTotalInstructions() << std::endl;
+    };
+
     oss << "--------------------------------------" << std::endl;
     oss << "Running processes:" << std::endl;
-    auto running = scheduler->getRunningProcesses();
-    for (const auto& p : running) {
-        oss << p->getName() << "   "
-            << "(" << p->getCreationTimestamp() << ")   "
-            << "Core: " << p->getCoreId() << "   "
-            << p->getCurrentLine() << " / " << p->getTotalInstructions()
-            << std::endl;
+    for (const auto& r : snap.running) {
+        row(r.process, "Core: " + std::to_string(r.coreId), r.process->getCurrentLine());
     }
 
     oss << std::endl;
-
-    // Finished processes
     oss << "Finished processes:" << std::endl;
-    auto finished = scheduler->getFinishedProcesses();
-    for (const auto& p : finished) {
-        oss << p->getName() << "   "
-            << "(" << p->getCreationTimestamp() << ")   "
-            << "Finished   "
-            << p->getTotalInstructions() << " / " << p->getTotalInstructions()
-            << std::endl;
+    for (const auto& p : snap.finished) {
+        row(p, "Finished", p->getTotalInstructions());
     }
-
     oss << "--------------------------------------" << std::endl;
 
     return oss.str();

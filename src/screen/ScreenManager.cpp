@@ -56,9 +56,8 @@ void ScreenManager::runProcessScreen(const std::string& processName) {
 
     std::string input;
     while (true) {
-        std::cout << "Process: " << processName << std::endl;
-        std::cout << "process-screen> ";
-        std::getline(std::cin, input);
+        std::cout << "root:\\> ";
+        if (!std::getline(std::cin, input)) return;  // EOF
 
         if (input == "exit") {
             // Return to main menu
@@ -70,7 +69,7 @@ void ScreenManager::runProcessScreen(const std::string& processName) {
             return;
         }
         else if (input == "process-smi") {
-            std::cout << renderProcessSmi(process) << std::endl;
+            std::cout << std::endl << renderProcessSmi(process) << std::endl;
         }
         else {
             std::cout << "Unrecognized command. Use 'process-smi' or 'exit'." << std::endl;
@@ -81,20 +80,17 @@ void ScreenManager::runProcessScreen(const std::string& processName) {
 std::string ScreenManager::renderProcessSmi(const std::shared_ptr<Process>& process) {
     std::ostringstream oss;
 
-    oss << "Process: " << process->getName() << std::endl;
+    oss << "Process name: " << process->getName() << std::endl;
     oss << "ID: " << process->getId() << std::endl;
-    oss << std::endl;
+    oss << "Logs:" << std::endl;
 
     // Print logs
-    auto logs = process->getLogs();
-    if (!logs.empty()) {
-        for (const auto& log : logs) {
-            oss << "(" << log.timestamp << ") "
-                << "Core:" << log.coreId << " "
-                << "\"" << log.message << "\"" << std::endl;
-        }
-        oss << std::endl;
+    for (const auto& log : process->getLogs()) {
+        oss << "(" << log.timestamp << ") "
+            << "Core:" << log.coreId << " "
+            << "\"" << log.message << "\"" << std::endl;
     }
+    oss << std::endl;
 
     oss << "Current instruction line: " << process->getCurrentLine() << std::endl;
     oss << "Lines of code: " << process->getTotalInstructions() << std::endl;

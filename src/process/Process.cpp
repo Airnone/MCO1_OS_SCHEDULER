@@ -47,8 +47,7 @@ uint32_t Process::getTotalInstructions() const {
 }
 
 uint32_t Process::getCurrentLine() const {
-    std::lock_guard<std::mutex> lock(mutex_);
-    return executedCount_;
+    return executedCount_.load();
 }
 
 bool Process::isFinished() const {
@@ -114,87 +113,106 @@ void Process::clampedSet(const std::string& name, int32_t val) {
     variables_[name] = static_cast<uint16_t>(val);
 }
 
-bool Process::executeNext(int coreId) {
-    // Called by Core thread — no mutex here, Core manages synchronization
-
+// Advance the execution stack to the next real (non-FOR) instruction:
+// finished FOR bodies repeat or pop, and FOR headers push a new frame.
+// Leaves the stack empty when the program is done.
+void Process::normalizeStack() {
     while (!execStack_.empty()) {
         auto& frame = execStack_.back();
 
         if (frame.pc >= frame.instrList->size()) {
-            // End of this block
             frame.iteration++;
             if (frame.iteration < frame.maxIterations) {
-                frame.pc = 0;  // repeat
-                continue;
+                frame.pc = 0;  // repeat the FOR body
+            } else {
+                execStack_.pop_back();  // block finished
             }
-            // Done with this frame
-            execStack_.pop_back();
             continue;
         }
 
         const Instruction& instr = (*frame.instrList)[frame.pc];
+        if (instr.type != InstructionType::For) return;
+
         frame.pc++;
+        if (instr.repeatCount == 0) continue;
+        ExecFrame forFrame;
+        forFrame.instrList = &instr.body;
+        forFrame.pc = 0;
+        forFrame.iteration = 0;
+        forFrame.maxIterations = instr.repeatCount;
+        execStack_.push_back(forFrame);  // FOR itself is not counted as a line
+    }
+}
 
-        switch (instr.type) {
-            case InstructionType::Print: {
-                std::string output = instr.msg;
-                if (!instr.varName.empty()) {
-                    // Interpolate variable
-                    output += std::to_string(getVariable(instr.varName));
-                }
-                // Add log entry (thread-safe via addLog)
-                addLog(coreId, output);
-                executedCount_++;
-                return true;
+bool Process::hasRemaining() {
+    normalizeStack();
+    return !execStack_.empty();
+}
+
+void Process::markFinished() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    state_ = ProcessState::Finished;
+}
+
+bool Process::executeNext(int coreId) {
+    // Called only from the scheduler thread.
+    normalizeStack();
+    if (execStack_.empty()) {
+        markFinished();
+        return false;
+    }
+
+    auto& frame = execStack_.back();
+    const Instruction& instr = (*frame.instrList)[frame.pc];
+    frame.pc++;
+
+    bool slept = false;
+    switch (instr.type) {
+        case InstructionType::Print: {
+            std::string output = instr.msg;
+            if (!instr.varName.empty()) {
+                output += std::to_string(getVariable(instr.varName));
             }
-            case InstructionType::Declare: {
-                variables_[instr.varName] = instr.value;
-                executedCount_++;
-                return true;
-            }
-            case InstructionType::Add: {
-                int32_t a = static_cast<int32_t>(resolveOperand(instr.src1));
-                int32_t b = static_cast<int32_t>(resolveOperand(instr.src2));
-                clampedSet(instr.dest, a + b);
-                executedCount_++;
-                return true;
-            }
-            case InstructionType::Subtract: {
-                int32_t a = static_cast<int32_t>(resolveOperand(instr.src1));
-                int32_t b = static_cast<int32_t>(resolveOperand(instr.src2));
-                clampedSet(instr.dest, a - b);
-                executedCount_++;
-                return true;
-            }
-            case InstructionType::Sleep: {
-                {
-                    std::lock_guard<std::mutex> lock(mutex_);
-                    sleepTicksRemaining_ = instr.sleepTicks;
-                    state_ = ProcessState::Sleeping;
-                }
-                executedCount_++;
-                return false;  // Caller must handle sleep
-            }
-            case InstructionType::For: {
-                // Push a new frame for the FOR body
-                ExecFrame forFrame;
-                forFrame.instrList = &instr.body;
-                forFrame.pc = 0;
-                forFrame.iteration = 0;
-                forFrame.maxIterations = instr.repeatCount;
-                execStack_.push_back(forFrame);
-                // Don't increment executedCount_ for FOR itself
-                continue;  // Process the first instruction in the FOR body
-            }
+            addLog(coreId, output);
+            break;
         }
+        case InstructionType::Declare:
+            variables_[instr.varName] = instr.value;
+            break;
+        case InstructionType::Add: {
+            int32_t a = static_cast<int32_t>(resolveOperand(instr.src1));
+            int32_t b = static_cast<int32_t>(resolveOperand(instr.src2));
+            clampedSet(instr.dest, a + b);
+            break;
+        }
+        case InstructionType::Subtract: {
+            int32_t a = static_cast<int32_t>(resolveOperand(instr.src1));
+            int32_t b = static_cast<int32_t>(resolveOperand(instr.src2));
+            clampedSet(instr.dest, a - b);
+            break;
+        }
+        case InstructionType::Sleep: {
+            std::lock_guard<std::mutex> lock(mutex_);
+            sleepTicksRemaining_ = instr.sleepTicks;
+            state_ = ProcessState::Sleeping;
+            slept = true;
+            break;
+        }
+        case InstructionType::For:
+            break;  // unreachable: normalizeStack() expands FOR headers
     }
+    executedCount_++;
 
-    // Execution stack empty — process finished
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        state_ = ProcessState::Finished;
+    // Finish in the same tick as the last instruction, so the core is
+    // released immediately instead of idling for an extra tick.
+    if (!hasRemaining()) {
+        if (!slept) {
+            markFinished();
+            return false;
+        }
+        // A trailing SLEEP still sleeps; the scheduler finishes the process on wake-up.
     }
-    return false;
+    return !slept;
 }
 
 // --- Static helpers ---

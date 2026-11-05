@@ -114,92 +114,134 @@ int Scheduler::getCoresUsed() const {
     return count;
 }
 
+ReportSnapshot Scheduler::snapshot() const {
+    // Holding loopMutex_ means no tick is in progress, so core assignments,
+    // process states and progress counters are all read at the same instant.
+    std::lock_guard<std::mutex> loopLock(loopMutex_);
+    ReportSnapshot snap;
+    snap.totalCores = config_.numCpu;
+    snap.coresUsed = 0;
+    for (const auto& core : cores_) {
+        auto p = core->getCurrentProcess();
+        if (p) {
+            snap.coresUsed++;
+            snap.running.push_back({p, core->getId()});
+        }
+    }
+    std::lock_guard<std::mutex> listLock(processListMutex_);
+    for (const auto& p : allProcesses_) {
+        if (p->getState() == ProcessState::Finished) {
+            snap.finished.push_back(p);
+        }
+    }
+    return snap;
+}
+
+std::string Scheduler::nextBatchName() {
+    // p01, p02, ... ; skip names already taken (e.g. by "screen -s p05")
+    while (true) {
+        batchCounter_++;
+        std::ostringstream nameStream;
+        nameStream << "p" << std::setw(2) << std::setfill('0') << batchCounter_;
+        if (!findProcess(nameStream.str())) return nameStream.str();
+    }
+}
+
 // --- The central scheduler loop (runs on its own thread) ---
+//
+// One pass = one CPU tick. Order within a tick:
+//   1. wake sleepers   2. batch generation   3. dispatch onto free cores
+//   4. execute one tick per busy core   5. RR preemption + dispatch again
+// Step 5 refills a core freed by a quantum expiry, SLEEP or finished process before
+// the tick ends, so no core sits idle for a tick while the ready queue has work.
 
 void Scheduler::schedulerLoop() {
-    bool isRR = (config_.scheduler == "rr");
-    uint32_t quantum = config_.quantumCycles;
-    uint32_t delaysPerExec = config_.delaysPerExec;
+    const bool isRR = (config_.scheduler == "rr");
+    const uint32_t quantum = config_.quantumCycles;
+    const uint32_t delaysPerExec = config_.delaysPerExec;
 
     while (running_) {
-        // 1. Wake up sleeping processes whose sleep time has expired
         {
-            uint64_t currentTick = clock_.getTicks();
-            auto it = sleepingProcesses_.begin();
-            while (it != sleepingProcesses_.end()) {
+            std::lock_guard<std::mutex> loopLock(loopMutex_);
+            const uint64_t currentTick = clock_.getTicks();
+
+            // 1. Wake up sleeping processes whose sleep time has expired
+            for (auto it = sleepingProcesses_.begin(); it != sleepingProcesses_.end();) {
                 if (currentTick >= it->wakeUpTick) {
-                    enqueue(it->process);
+                    auto p = it->process;
+                    if (p->hasRemaining()) {
+                        enqueue(p);
+                    } else {
+                        p->markFinished();  // SLEEP was its last instruction
+                    }
                     it = sleepingProcesses_.erase(it);
                 } else {
                     ++it;
                 }
             }
-        }
 
-        // 2. Batch process generation
-        if (batchRunning_) {
-            uint64_t currentTick = clock_.getTicks();
-            if (currentTick - lastBatchSpawnTick_ >= config_.batchProcessFreq) {
-                batchCounter_++;
-                std::ostringstream nameStream;
-                if (batchCounter_ < 10) {
-                    nameStream << "p0" << batchCounter_;
-                } else {
-                    nameStream << "p" << batchCounter_;
-                }
-                createProcess(nameStream.str());
+            // 2. Batch process generation: one new process every batch-process-freq ticks
+            if (batchRunning_ && currentTick - lastBatchSpawnTick_ >= config_.batchProcessFreq) {
+                createProcess(nextBatchName());
                 lastBatchSpawnTick_ = currentTick;
             }
-        }
 
-        // 3. Assign ready processes to free cores
-        {
-            std::lock_guard<std::mutex> lock(queueMutex_);
-            for (auto& core : cores_) {
-                if (!core->isBusy() && !readyQueue_.empty()) {
-                    auto process = readyQueue_.front();
-                    readyQueue_.pop_front();
-                    core->assignProcess(process);
-                }
-            }
-        }
-
-        // 4. Execute one tick on each busy core
-        for (auto& core : cores_) {
-            if (!core->isBusy()) continue;
-
-            // Check RR quantum BEFORE executing
-            if (isRR && core->getTicksOnProcess() >= quantum) {
-                auto process = core->removeProcess();
-                if (process && !process->isFinished()) {
-                    enqueue(process);  // Preempt back to ready queue
-                }
-                continue;
-            }
-
-            uint32_t dummy = 0;
-            bool stillRunning = core->executeTick(delaysPerExec, dummy);
-
-            if (!stillRunning) {
-                auto process = core->getCurrentProcess();
-                if (process) {
-                    ProcessState state = process->getState();
-                    if (state == ProcessState::Sleeping) {
-                        auto p = core->removeProcess();
-                        uint64_t wakeAt = clock_.getTicks() + p->getSleepTicks();
-                        sleepingProcesses_.push_back({p, wakeAt});
-                    } else if (state == ProcessState::Finished) {
-                        core->removeProcess();
-                        // Process stays in allProcesses_ for reporting
+            auto preemptExpired = [&]() {
+                if (!isRR) return;
+                for (auto& core : cores_) {
+                    if (core->isBusy() && core->getTicksOnProcess() >= quantum) {
+                        auto process = core->removeProcess();
+                        if (process && !process->isFinished()) {
+                            enqueue(process);  // back of the ready queue
+                        }
                     }
                 }
+            };
+            auto dispatch = [&]() {
+                std::lock_guard<std::mutex> lock(queueMutex_);
+                for (auto& core : cores_) {
+                    if (!core->isBusy() && !readyQueue_.empty()) {
+                        auto process = readyQueue_.front();
+                        readyQueue_.pop_front();
+                        core->assignProcess(process);
+                    }
+                }
+            };
+
+            // 3. Fill any free core (e.g. with processes that just woke or were created)
+            dispatch();
+
+            // 4. Execute one tick on each busy core
+            for (auto& core : cores_) {
+                if (!core->isBusy()) continue;
+
+                uint32_t dummy = 0;
+                bool stillRunning = core->executeTick(delaysPerExec, dummy);
+                if (stillRunning) continue;
+
+                auto process = core->getCurrentProcess();
+                if (!process) continue;
+                ProcessState state = process->getState();
+                if (state == ProcessState::Sleeping) {
+                    auto p = core->removeProcess();
+                    // SLEEP(X): skip the next X ticks, run again on tick +X+1
+                    uint64_t wakeAt = currentTick + 1 + p->getSleepTicks();
+                    sleepingProcesses_.push_back({p, wakeAt});
+                } else if (state == ProcessState::Finished) {
+                    core->removeProcess();  // stays in allProcesses_ for reporting
+                }
             }
+
+            // 5. End of tick: Round Robin preemption, then refill freed cores right away,
+            //    so between ticks (when reports are taken) no core idles while work waits.
+            preemptExpired();
+            dispatch();
+
+            // 6. Advance the global CPU tick
+            clock_.tick();
         }
 
-        // 5. Advance the global CPU tick
-        clock_.tick();
-
-        // Small sleep to prevent 100% CPU usage (not wall-clock time — just prevents busy spin)
+        // Yield briefly so the CLI thread can take snapshots (not a wall-clock tick)
         std::this_thread::sleep_for(std::chrono::microseconds(1));
     }
 }

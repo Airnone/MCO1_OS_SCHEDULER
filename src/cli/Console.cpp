@@ -22,7 +22,14 @@ void Console::printBanner() const {
  | |___ ____) | |__| | |    | |____ ____) |  | |
   \_____|_____/ \____/|_|    |______|_____/   |_|
 )" << std::endl;
-    std::cout << "Hello, Welcome to CSOPESY commandline!" << std::endl;
+    std::cout << "----------------------------------------------" << std::endl;
+    std::cout << "Welcome to CSOPESY Emulator!" << std::endl;
+    std::cout << std::endl;
+    std::cout << "Developers:" << std::endl;
+    std::cout << "Corral, Dicreto, Salvador" << std::endl;
+    std::cout << std::endl;
+    std::cout << "Last updated: 11-05-2026" << std::endl;
+    std::cout << std::endl;
     std::cout << "Type 'initialize' to start or 'exit' to quit." << std::endl;
     std::cout << std::endl;
 }

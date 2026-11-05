@@ -13,6 +13,18 @@
 #include "Core.h"
 #include "Clock.h"
 
+// A consistent, point-in-time view used by "screen -ls" and "report-util".
+struct ReportSnapshot {
+    struct RunningEntry {
+        std::shared_ptr<Process> process;
+        int coreId;
+    };
+    int totalCores = 0;
+    int coresUsed = 0;
+    std::vector<RunningEntry> running;            // ordered by core id
+    std::vector<std::shared_ptr<Process>> finished;  // in creation order
+};
+
 class Scheduler {
 public:
     Scheduler(const Config& config);
@@ -39,6 +51,9 @@ public:
     // Config access
     const Config& getConfig() const { return config_; }
     Clock& getClock() { return clock_; }
+
+    // Atomic view of cores + processes for reporting
+    ReportSnapshot snapshot() const;
 
     // Number of active (non-idle) cores
     int getCoresUsed() const;
@@ -78,5 +93,8 @@ private:
 
     // The single scheduler thread that drives the tick loop
     std::thread schedulerThread_;
+    // Held for the duration of each tick; snapshot() takes it to read a stable state
+    mutable std::mutex loopMutex_;
+    std::string nextBatchName();
     void schedulerLoop();
 };

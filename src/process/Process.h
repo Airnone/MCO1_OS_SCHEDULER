@@ -4,6 +4,7 @@
 #include <map>
 #include <cstdint>
 #include <mutex>
+#include <atomic>
 #include "Instruction.h"
 
 enum class ProcessState { Ready, Running, Sleeping, Finished };
@@ -34,6 +35,10 @@ public:
     // Execute one instruction. Returns true if still runnable this tick.
     // Returns false if finished or if a SLEEP was hit (caller checks state).
     bool executeNext(int coreId);
+
+    // True if any instruction is left to run (scheduler thread only)
+    bool hasRemaining();
+    void markFinished();
 
     // Variable table
     uint16_t getVariable(const std::string& name);
@@ -67,7 +72,7 @@ private:
     };
     std::vector<ExecFrame> execStack_;
     uint32_t totalInstructions_;
-    uint32_t executedCount_ = 0;
+    std::atomic<uint32_t> executedCount_{0};
 
     std::map<std::string, uint16_t> variables_;
     std::vector<LogEntry> logs_;
@@ -76,6 +81,7 @@ private:
 
     uint8_t sleepTicksRemaining_ = 0;
 
+    void normalizeStack();
     static uint32_t countInstructions(const std::vector<Instruction>& instrs);
     static std::string getCurrentTimestamp();
     uint16_t resolveOperand(const Operand& op);
