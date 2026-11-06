@@ -1,0 +1,3 @@
+C:/Users/DELL/OneDrive/Documents/GitHub/MCO1_OS_SCHEDULER/build/CMakeFiles/csopesy.dir
+C:/Users/DELL/OneDrive/Documents/GitHub/MCO1_OS_SCHEDULER/build/CMakeFiles/edit_cache.dir
+C:/Users/DELL/OneDrive/Documents/GitHub/MCO1_OS_SCHEDULER/build/CMakeFiles/rebuild_cache.dir
